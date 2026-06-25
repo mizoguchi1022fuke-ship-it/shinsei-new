@@ -1,0 +1,9 @@
+{
+  "name": "溝口急送 残業・休日出勤 申請",
+  "short_name": "溝口申請",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1F4E78",
+  "theme_color": "#1F4E78"
+}
