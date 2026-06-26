@@ -156,6 +156,47 @@ exports.handler = async (event) => {
       return json(200, { application: data });
     }
 
+    // 集計用：指定月（YYYY-MM）の承認済み・一部承認の申請を返す
+    if (action === 'summary') {
+      const ym = q.ym; // 'YYYY-MM'
+      const { data, error } = await supabase.from('applications')
+        .select('*').in('status', ['承認済', '一部承認']).order('created_at', { ascending: true }).limit(1000);
+      if (error) return json(500, { error: error.message });
+      // 申請を「日」単位に展開し、指定月のものだけ返す（残業は承認された日のみ）
+      const rows = [];
+      (data || []).forEach(a => {
+        if (a.type === '休日出勤') {
+          const d = a.detail || {};
+          const date = d.date || a.apply_date || '';
+          if (ym && String(date).slice(0, 7) !== ym) return;
+          // 一部承認は休日出勤では発生しないが、念のため却下は除外
+          if (a.status === '却下') return;
+          rows.push({
+            date, name: a.applicant_name || '', sha: a.sha || '', type: '休日出勤',
+            ot: 0, start: d.start || '', end: d.end || '', furikae: d.furikae || '',
+            reason: d.reason || '', status: a.status, approver: a.approver || '', app_no: a.app_no
+          });
+        } else {
+          const days = (a.detail && a.detail.days) || [];
+          let okDates = null;
+          if (a.status === '一部承認' && a.result && a.result.days) {
+            okDates = new Set(a.result.days.filter(r => r.result === '承認').map(r => r.date));
+          }
+          days.forEach(day => {
+            if (okDates && !okDates.has(day.date)) return;
+            if (ym && String(day.date).slice(0, 7) !== ym) return;
+            rows.push({
+              date: day.date, name: a.applicant_name || '', sha: a.sha || '', type: '残業',
+              ot: day.ot || 0, start: day.start || '', end: day.end || '', furikae: '',
+              reason: (a.detail && a.detail.reason) || '', status: a.status, approver: a.approver || '', app_no: a.app_no
+            });
+          });
+        }
+      });
+      rows.sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0));
+      return json(200, { rows });
+    }
+
     return json(404, { error: 'unknown action: ' + action });
   } catch (e) {
     return json(500, { error: e.message || String(e) });
