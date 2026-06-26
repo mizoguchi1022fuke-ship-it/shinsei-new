@@ -105,7 +105,7 @@
     var kubun='残業';
     function setKubun(v){
       kubun=v;
-      [].forEach.call($('kubun-seg').children,function(b){ b.setAttribute('aria-pressed', b.getAttribute('data-v')===v?'true':'false'); });
+      [].forEach.call($('kubun-seg').children,function(b){ var on=b.getAttribute('data-v')===v; b.setAttribute('aria-pressed', on?'true':'false'); b.style.background=on?'var(--navy)':'transparent'; b.style.color=on?'#fff':'var(--muted)'; });
       $('app-title').textContent=v+'申請';
       if(v==='残業') buildZangyo(holder); else buildKyujitsu(holder);
     }
