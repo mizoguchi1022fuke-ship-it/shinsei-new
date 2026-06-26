@@ -100,6 +100,37 @@ exports.handler = async (event) => {
       else if (q.scope === 'mine' && q.user_id) query = query.eq('applicant_id', q.user_id);
       const { data, error } = await query;
       if (error) return json(500, { error: error.message });
+
+      // 承認待ち一覧には、申請者の「当月の承認済み残業」を付与（60時間アラート用）
+      if (q.scope === 'pending' && data && data.length) {
+        const ids = [...new Set(data.filter(a => a.type === '残業' && a.applicant_id).map(a => a.applicant_id))];
+        if (ids.length) {
+          const { data: approved } = await supabase.from('applications')
+            .select('applicant_id,status,detail,result')
+            .in('applicant_id', ids).eq('type', '残業').in('status', ['承認済', '一部承認']);
+          const map = {}; // applicant_id -> { 'YYYY-MM': minutes }
+          (approved || []).forEach(ap => {
+            const days = (ap.detail && ap.detail.days) || [];
+            let okDates = null;
+            if (ap.status === '一部承認' && ap.result && ap.result.days) {
+              okDates = new Set(ap.result.days.filter(r => r.result === '承認').map(r => r.date));
+            }
+            days.forEach(day => {
+              if (okDates && !okDates.has(day.date)) return;
+              const ym = String(day.date).slice(0, 7);
+              map[ap.applicant_id] = map[ap.applicant_id] || {};
+              map[ap.applicant_id][ym] = (map[ap.applicant_id][ym] || 0) + (day.ot || 0);
+            });
+          });
+          data.forEach(a => {
+            if (a.type !== '残業') return;
+            const days = (a.detail && a.detail.days) || [];
+            const refYm = (days[0] && String(days[0].date).slice(0, 7)) || (a.apply_date && String(a.apply_date).slice(0, 7)) || '';
+            a.month_label = refYm;
+            a.month_approved_ot = (map[a.applicant_id] && map[a.applicant_id][refYm]) || 0;
+          });
+        }
+      }
       return json(200, { applications: data });
     }
 
