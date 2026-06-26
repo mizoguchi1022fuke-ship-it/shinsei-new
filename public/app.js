@@ -269,6 +269,23 @@
       }
     }
 
+    // 残業の60時間アラート（承認待ち一覧でのみ付与される）
+    if(a.type!=='休日出勤' && typeof a.month_approved_ot==='number'){
+      var refYm=a.month_label||'';
+      var thisOt=(d.days||[]).filter(function(day){return String(day.date).slice(0,7)===refYm;}).reduce(function(s,day){return s+(day.ot||0);},0);
+      var combined=a.month_approved_ot+thisOt;
+      var ymLabel= refYm ? (refYm.split('-')[0]+'年'+(+refYm.split('-')[1])+'月') : '当月';
+      var bg='#eef4ec', col='#1f8a4c', tag='';
+      if(combined>=3600){ bg='#fbe3e3'; col='#c0392b'; tag='⚠ 月60時間に達しています'; }
+      else if(combined>=2700){ bg='#fff3da'; col='#9a6b00'; tag='月45時間を超えています'; }
+      var box=el('div',null,
+        '<div style="font-size:12.5px;color:#6b7785;margin-bottom:2px">'+ymLabel+'の残業（承認済み）合計 '+durText(a.month_approved_ot)+'</div>'+
+        '<div style="font-size:14px;font-weight:800;color:'+col+'">この申請を含めると '+durText(combined)+'</div>'+
+        (tag?('<div style="font-size:12px;font-weight:700;color:'+col+';margin-top:2px">'+tag+'</div>'):''));
+      box.style.cssText='background:'+bg+';border-radius:10px;padding:10px 12px;margin-top:10px';
+      card.appendChild(box);
+    }
+
     if(approvable && a.status==='承認待ち'){
       card.appendChild(buildApproveUI(a));
     }
