@@ -59,7 +59,7 @@
     $('app-view').classList.remove('hide');
     $('who').textContent = user.name + (user.role==='manager'?'（承認者）':'');
     var tabs = (user.role==='manager')
-      ? [['pending','承認待ち'],['submit','申請する'],['mine','申請履歴']]
+      ? [['pending','承認待ち'],['submit','申請する'],['mine','申請履歴'],['summary','集計']]
       : [['submit','申請する'],['mine','申請履歴']];
     var tabsEl=$('tabs'); tabsEl.innerHTML='';
     tabs.forEach(function(t){
@@ -76,6 +76,7 @@
     if(tab==='submit') renderSubmit();
     else if(tab==='mine') renderList('mine');
     else if(tab==='pending') renderList('pending');
+    else if(tab==='summary') renderSummary();
   }
   if(user) enterApp();
 
@@ -346,6 +347,90 @@
       .then(function(){ toast('回答を送信しました'); selectTab('pending'); })
       .catch(function(e){ toast(e.message); });
   }
+
+  /* ---------- 集計 ---------- */
+  function renderSummary(){
+    $('app-title').textContent='集計';
+    var c=$('content'); c.innerHTML='';
+    var now=new Date(); var defYm=now.getFullYear()+'-'+('0'+(now.getMonth()+1)).slice(-2);
+
+    var head=el('div','card');
+    head.innerHTML='<label class="lab">対象月</label>'+
+      '<div class="row2"><input type="month" id="sum-ym" value="'+defYm+'"><button class="btn primary" id="sum-go" style="white-space:nowrap">表示</button></div>'+
+      '<button class="btn" id="sum-csv" style="margin-top:10px">CSVで書き出す</button>';
+    c.appendChild(head);
+    var area=el('div',null); area.id='sum-area'; c.appendChild(area);
+
+    var lastRows=[], lastYm=defYm;
+    function load(){
+      var ym=$('sum-ym').value||defYm; lastYm=ym;
+      area.innerHTML='<div class="empty">読み込み中…</div>';
+      api('/summary?ym='+encodeURIComponent(ym)).then(function(j){
+        lastRows=j.rows||[]; drawSummary(area, lastRows, ym);
+      }).catch(function(e){ area.innerHTML=''; area.appendChild(el('div','empty',e.message)); });
+    }
+    $('sum-go').addEventListener('click',load);
+    $('sum-csv').addEventListener('click',function(){ exportCsv(lastRows, lastYm); });
+    load();
+  }
+
+  function drawSummary(area, rows, ym){
+    area.innerHTML='';
+    var ymLabel=ym.split('-')[0]+'年'+(+ym.split('-')[1])+'月';
+    if(rows.length===0){ area.appendChild(el('div','empty', ymLabel+'の承認済みデータはありません')); return; }
+
+    // 個人別サマリー
+    var per={}; // name -> {ot:分, kyu:日数}
+    rows.forEach(function(r){
+      per[r.name]=per[r.name]||{ot:0,kyu:0};
+      if(r.type==='残業') per[r.name].ot+=(r.ot||0);
+      else per[r.name].kyu+=1;
+    });
+    var sumCard=el('div','card');
+    var html='<span class="lab">個人別（'+ymLabel+'）</span><div style="margin-top:8px">';
+    Object.keys(per).sort().forEach(function(name){
+      var p=per[name];
+      var col= p.ot>=3600?'#c0392b':(p.ot>=2700?'#9a6b00':'#1b2733');
+      var warn= p.ot>=3600?' ⚠60h':(p.ot>=2700?' 45h超':'');
+      html+='<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)">'+
+        '<span style="font-weight:700">'+escapeHtml(name)+'</span>'+
+        '<span style="font-size:13.5px">残業 <b style="color:'+col+'">'+durText(p.ot)+'</b>'+(warn?'<span style="color:'+col+';font-weight:700">'+warn+'</span>':'')+' ／ 休日出勤 '+p.kyu+'日</span></div>';
+    });
+    html+='</div>';
+    sumCard.innerHTML=html;
+    area.appendChild(sumCard);
+
+    // 明細
+    var detCard=el('div','card');
+    var dh='<span class="lab">明細（'+rows.length+'件）</span><div style="margin-top:8px;font-size:13px">';
+    rows.forEach(function(r){
+      var line= r.type==='残業'
+        ? (fmtMD(r.date)+' '+escapeHtml(r.name)+' 残業'+durText(r.ot))
+        : (fmtMD(r.date)+' '+escapeHtml(r.name)+' 休日出勤 '+r.start+'〜'+r.end+(r.furikae?('／振替'+fmtMD(r.furikae)):''));
+      dh+='<div style="padding:6px 0;border-bottom:1px solid var(--line)">'+line+(r.status==='一部承認'?' <span class="muted">(一部承認)</span>':'')+'</div>';
+    });
+    dh+='</div>';
+    detCard.innerHTML=dh;
+    area.appendChild(detCard);
+  }
+
+  function exportCsv(rows, ym){
+    if(!rows || rows.length===0){ toast('書き出すデータがありません'); return; }
+    var head=['日付','氏名','車番','区分','残業時間','開始','終了','振替休日','理由','状態','承認者'];
+    var lines=[head.join(',')];
+    rows.forEach(function(r){
+      var ot = r.type==='残業' ? durText(r.ot) : '';
+      var cells=[r.date, r.name, r.sha, r.type, ot, r.start, r.end, r.furikae, (r.reason||'').replace(/\r?\n/g,' '), r.status, r.approver];
+      lines.push(cells.map(csvCell).join(','));
+    });
+    // Excelで文字化けしないよう BOM 付き
+    var blob=new Blob(['\ufeff'+lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a'); a.href=url; a.download='集計_'+ym+'.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+  }
+  function csvCell(v){ v=(v==null?'':String(v)); if(/[",\r\n]/.test(v)){ v='"'+v.replace(/"/g,'""')+'"'; } return v; }
 
   function escapeHtml(s){ return String(s).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 })();
