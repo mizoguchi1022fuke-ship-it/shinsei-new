@@ -86,7 +86,7 @@ exports.handler = async (event) => {
       if (error) return json(500, { error: error.message });
       const { data: mgrs } = await supabase.from('employees').select('id').eq('role', 'manager');
       await pushTo((mgrs || []).map(m => m.id), {
-        title: '新しい残業申請',
+        title: '新しい' + rec.type + '申請',
         body: `${rec.applicant_name} さんから申請（No.${rec.app_no}）`,
         url: './'
       });
