@@ -385,7 +385,7 @@
     var head=el('div','card');
     head.innerHTML='<label class="lab">対象月</label>'+
       '<div class="row2"><input type="month" id="sum-ym" value="'+defYm+'"><button class="btn primary" id="sum-go" style="white-space:nowrap">表示</button></div>'+
-      '<button class="btn" id="sum-csv" style="margin-top:10px">CSVで書き出す</button>';
+      '<button class="btn" id="sum-xlsx" style="margin-top:10px">xlsxで書き出す</button>';
     c.appendChild(head);
     var area=el('div',null); area.id='sum-area'; c.appendChild(area);
 
@@ -398,7 +398,7 @@
       }).catch(function(e){ area.innerHTML=''; area.appendChild(el('div','empty',e.message)); });
     }
     $('sum-go').addEventListener('click',load);
-    $('sum-csv').addEventListener('click',function(){ exportCsv(lastRows, lastYm); });
+    $('sum-xlsx').addEventListener('click',function(){ exportXlsx(lastRows, lastYm); });
     load();
   }
 
@@ -444,23 +444,41 @@
     area.appendChild(detCard);
   }
 
-  function exportCsv(rows, ym){
+  function exportXlsx(rows, ym){
     if(!rows || rows.length===0){ toast('書き出すデータがありません'); return; }
-    var head=['日付','氏名','車番','区分','残業時間','開始','終了','振替休日','理由','状態','承認者'];
-    var lines=[head.join(',')];
+    if(typeof XLSX==='undefined'){ toast('Excel機能を読み込み中です。少し待って再度お試しください'); return; }
+
+    // シート1：個人別サマリー
+    var per={}; // name -> {ot:分, kyu:休日出勤日数, yasumi:休日申請日数}
+    rows.forEach(function(r){
+      per[r.name]=per[r.name]||{ot:0,kyu:0,yasumi:0};
+      if(r.type==='残業') per[r.name].ot+=(r.ot||0);
+      else if(r.type==='休日出勤') per[r.name].kyu+=1;
+      else per[r.name].yasumi+=1;
+    });
+    var sumAoa=[['氏名','残業時間','60h警告','休日出勤(日)','休日申請(日)']];
+    Object.keys(per).sort().forEach(function(name){
+      var p=per[name];
+      var warn = p.ot>=3600 ? '⚠60h超' : (p.ot>=2700 ? '45h超' : '');
+      sumAoa.push([name, durText(p.ot), warn, p.kyu, p.yasumi]);
+    });
+    var ws1=XLSX.utils.aoa_to_sheet(sumAoa);
+    ws1['!cols']=[{wch:14},{wch:10},{wch:10},{wch:13},{wch:13}];
+
+    // シート2：明細
+    var detAoa=[['日付','氏名','車番','区分','残業時間','開始','終了','振替休日','理由','状態','承認者']];
     rows.forEach(function(r){
       var ot = r.type==='残業' ? durText(r.ot) : '';
-      var cells=[r.date, r.name, r.sha, r.type, ot, r.start, r.end, r.furikae, (r.reason||'').replace(/\r?\n/g,' '), r.status, r.approver];
-      lines.push(cells.map(csvCell).join(','));
+      detAoa.push([r.date, r.name, r.sha||'', r.type, ot, r.start||'', r.end||'', r.furikae||'', r.reason||'', r.status, r.approver||'']);
     });
-    // Excelで文字化けしないよう BOM 付き
-    var blob=new Blob(['\ufeff'+lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
-    var url=URL.createObjectURL(blob);
-    var a=document.createElement('a'); a.href=url; a.download='集計_'+ym+'.csv';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    var ws2=XLSX.utils.aoa_to_sheet(detAoa);
+    ws2['!cols']=[{wch:11},{wch:10},{wch:7},{wch:10},{wch:9},{wch:7},{wch:7},{wch:11},{wch:32},{wch:9},{wch:10}];
+
+    var wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws1, '個人別サマリー');
+    XLSX.utils.book_append_sheet(wb, ws2, '明細');
+    XLSX.writeFile(wb, '集計_'+ym+'.xlsx');
   }
-  function csvCell(v){ v=(v==null?'':String(v)); if(/[",\r\n]/.test(v)){ v='"'+v.replace(/"/g,'""')+'"'; } return v; }
 
   function escapeHtml(s){ return String(s).replace(/[&<>"]/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 })();
