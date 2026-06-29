@@ -19,16 +19,24 @@ function json(code, obj) {
 }
 
 async function pushTo(employeeIds, payload) {
-  if (!employeeIds || employeeIds.length === 0) return;
-  const { data: subs } = await supabase
+  if (!employeeIds || employeeIds.length === 0) {
+    console.log('[push] skip: no target employeeIds');
+    return;
+  }
+  const { data: subs, error: subErr } = await supabase
     .from('push_subscriptions').select('id,subscription').in('employee_id', employeeIds);
-  if (!subs) return;
+  if (subErr) { console.error('[push] subscription lookup error', subErr.message); return; }
+  console.log(`[push] targets=${employeeIds.length} subscriptions=${(subs||[]).length} title="${payload.title}"`);
+  if (!subs || subs.length === 0) return;
   await Promise.all(subs.map(async (row) => {
     try {
       await webpush.sendNotification(row.subscription, JSON.stringify(payload));
+      console.log(`[push] sent ok -> sub ${row.id}`);
     } catch (e) {
+      console.error(`[push] send failed -> sub ${row.id} status=${e.statusCode} body=${e.body || e.message}`);
       if (e.statusCode === 404 || e.statusCode === 410) {
         await supabase.from('push_subscriptions').delete().eq('id', row.id);
+        console.log(`[push] removed stale subscription ${row.id}`);
       }
     }
   }));
@@ -84,9 +92,12 @@ exports.handler = async (event) => {
       };
       const { data, error } = await supabase.from('applications').insert(rec).select().single();
       if (error) return json(500, { error: error.message });
-      const { data: mgrs } = await supabase.from('employees').select('id').eq('role', 'manager');
+      const { data: mgrs, error: mgrErr } = await supabase.from('employees').select('id').eq('role', 'manager');
+      if (mgrErr) console.error('[push] manager lookup error', mgrErr.message);
+      console.log(`[submit] type=${rec.type} app_no=${rec.app_no} managers=${(mgrs||[]).length}`);
+      const typeLabel = rec.type.endsWith('申請') ? rec.type : rec.type + '申請';
       await pushTo((mgrs || []).map(m => m.id), {
-        title: '新しい' + rec.type + '申請',
+        title: '新しい' + typeLabel,
         body: `${rec.applicant_name} さんから申請（No.${rec.app_no}）`,
         url: './'
       });
@@ -165,14 +176,14 @@ exports.handler = async (event) => {
       // 申請を「日」単位に展開し、指定月のものだけ返す（残業は承認された日のみ）
       const rows = [];
       (data || []).forEach(a => {
-        if (a.type === '休日出勤') {
+        if (a.type === '休日出勤' || a.type === '休日申請') {
           const d = a.detail || {};
           const date = d.date || a.apply_date || '';
           if (ym && String(date).slice(0, 7) !== ym) return;
-          // 一部承認は休日出勤では発生しないが、念のため却下は除外
+          // 却下は集計対象から除外
           if (a.status === '却下') return;
           rows.push({
-            date, name: a.applicant_name || '', sha: a.sha || '', type: '休日出勤',
+            date, name: a.applicant_name || '', sha: a.sha || '', type: a.type,
             ot: 0, start: d.start || '', end: d.end || '', furikae: d.furikae || '',
             reason: d.reason || '', status: a.status, approver: a.approver || '', app_no: a.app_no
           });
