@@ -89,8 +89,9 @@
     var segCard=el('div','card');
     segCard.innerHTML='<span class="lab">申請区分 <span class="req">*</span></span>'+
       '<div class="seg" id="kubun-seg" style="margin-top:6px">'+
-      '<button type="button" data-v="残業" aria-pressed="true">残業</button>'+
-      '<button type="button" data-v="休日出勤" aria-pressed="false">休日出勤</button></div>';
+      '<button type="button" data-v="休日出勤" aria-pressed="true">休日出勤</button>'+
+      '<button type="button" data-v="休日申請" aria-pressed="false">休日申請</button></div>'+
+      '<p class="hint">※残業申請は雇用契約見直しのため、現在一時停止しています。</p>';
     c.appendChild(segCard);
 
     var basic=el('div','card');
@@ -103,20 +104,26 @@
     var holder=el('div',null); holder.id='kubun-body'; c.appendChild(holder);
     $('f-date').value=todayStr(); $('f-name').value=user.name;
 
-    var kubun='残業';
+    var kubun='休日出勤';
     function setKubun(v){
       kubun=v;
       [].forEach.call($('kubun-seg').children,function(b){ var on=b.getAttribute('data-v')===v; b.setAttribute('aria-pressed', on?'true':'false'); b.style.background=on?'var(--navy)':'transparent'; b.style.color=on?'#fff':'var(--muted)'; });
-      $('app-title').textContent=v+'申請';
-      if(v==='残業') buildZangyo(holder); else buildKyujitsu(holder);
+      $('app-title').textContent = (v==='休日申請') ? v : v+'申請';
+      if(v==='残業') buildZangyo(holder);
+      else if(v==='休日出勤') buildKyujitsu(holder);
+      else buildKyukyu(holder);
     }
     [].forEach.call($('kubun-seg').children,function(b){ b.addEventListener('click',function(){ setKubun(b.getAttribute('data-v')); }); });
 
     var bar=$('bar'); bar.classList.remove('hide');
     $('bar-btn').textContent='申請する'; $('bar-btn').className='btn primary';
-    $('bar-btn').onclick=function(){ if(kubun==='残業') submitZangyo(appno); else submitKyujitsu(appno); };
+    $('bar-btn').onclick=function(){
+      if(kubun==='残業') submitZangyo(appno);
+      else if(kubun==='休日出勤') submitKyujitsu(appno);
+      else submitKyukyu(appno);
+    };
 
-    setKubun('残業');
+    setKubun('休日出勤');
   }
 
   /* ---------- 残業ブロック ---------- */
@@ -180,13 +187,12 @@
     send(appno, '残業', detail);
   }
 
-  /* ---------- 休日出勤ブロック ---------- */
+  /* ---------- 休日出勤ブロック（終日のみ） ---------- */
   function buildKyujitsu(holder){
     holder.innerHTML='';
     var card1=el('div','card');
     card1.innerHTML='<label class="lab">対象日（出勤する日） <span class="req">*</span></label><input type="date" id="k-date">'+
-      '<div class="row2" style="margin-top:12px"><div><span class="rowlab">開始</span><input type="time" id="k-start" step="300"></div><div><span class="rowlab">終了</span><input type="time" id="k-end" step="300"></div></div>'+
-      '<div class="rowcalc" id="k-calc"></div>'+
+      '<p class="hint">終日の出勤として申請されます。</p>'+
       '<label class="lab" style="margin-top:14px">振替休日 予定日 <span class="req">*</span></label><input type="date" id="k-furikae">'+
       '<p class="hint">休日出勤の振替として取得する休日の予定日を入力してください。</p>';
     holder.appendChild(card1);
@@ -195,21 +201,40 @@
       '<p class="hint">運賃が分かる場合は、あわせてご記入ください（不明な場合は未記入で構いません）。</p>';
     holder.appendChild(rcard);
     $('k-date').value=todayStr();
-    function kprev(){ var m=diff($('k-start').value,$('k-end').value); $('k-calc').textContent= m!=null?('実働 '+durText(m)):''; }
-    $('k-start').addEventListener('input',kprev); $('k-end').addEventListener('input',kprev);
   }
   function submitKyujitsu(appno){
-    var date=$('k-date').value, s=$('k-start').value, e=$('k-end').value, fu=$('k-furikae').value, reason=$('k-reason').value.trim();
+    var date=$('k-date').value, fu=$('k-furikae').value, reason=$('k-reason').value.trim();
     var miss=[];
     if(!$('f-date').value) miss.push('申請日');
     if(!date) miss.push('対象日');
-    if(!s) miss.push('開始');
-    if(!e) miss.push('終了');
     if(!fu) miss.push('振替休日 予定日');
     if(!reason) miss.push('理由');
     if(miss.length){ toast('未入力：'+miss.join('・')); return; }
-    var detail={ date:date, start:s, end:e, hours:diff(s,e), furikae:fu, reason:reason };
+    var detail={ date:date, furikae:fu, reason:reason };
     send(appno, '休日出勤', detail);
+  }
+
+  /* ---------- 休日申請ブロック（終日・出勤なし） ---------- */
+  function buildKyukyu(holder){
+    holder.innerHTML='';
+    var card1=el('div','card');
+    card1.innerHTML='<label class="lab">対象日（休む日） <span class="req">*</span></label><input type="date" id="q-date">'+
+      '<p class="hint">終日の休みとして申請されます。出勤はしません。</p>';
+    holder.appendChild(card1);
+    var rcard=el('div','card');
+    rcard.innerHTML='<label class="lab">理由 <span class="req">*</span></label><textarea id="q-reason" placeholder="例）私用のため"></textarea>';
+    holder.appendChild(rcard);
+    $('q-date').value=todayStr();
+  }
+  function submitKyukyu(appno){
+    var date=$('q-date').value, reason=$('q-reason').value.trim();
+    var miss=[];
+    if(!$('f-date').value) miss.push('申請日');
+    if(!date) miss.push('対象日');
+    if(!reason) miss.push('理由');
+    if(miss.length){ toast('未入力：'+miss.join('・')); return; }
+    var detail={ date:date, reason:reason };
+    send(appno, '休日申請', detail);
   }
 
   function send(appno, type, detail){
@@ -240,15 +265,18 @@
   }
   function appCard(a, approvable){
     var d=a.detail||{}; var card=el('div','card');
+    var typeLabel=(a.type||'残業'); typeLabel = typeLabel.indexOf('申請')>=0 ? typeLabel : typeLabel+'申請';
     var head='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'+
-      '<div><b>'+(a.type||'残業')+'申請</b> <span class="muted">No.'+a.app_no+'</span></div>'+statusPill(a.status)+'</div>';
+      '<div><b>'+typeLabel+'</b> <span class="muted">No.'+a.app_no+'</span></div>'+statusPill(a.status)+'</div>';
     var who='<div class="muted" style="margin-bottom:8px">'+(a.applicant_name||'')+(a.sha?(' ／ 車番 '+a.sha):'')+' ／ 申請日 '+fmtDate(a.apply_date)+'</div>';
     var body;
     if(a.type==='休日出勤'){
       body='<div style="font-size:14px;line-height:1.8">'+
-        '対象日：'+fmtDate(d.date)+'<br>'+
-        '時間：'+(d.start||'')+'〜'+(d.end||'')+(d.hours!=null?('（'+durText(d.hours)+'）'):'')+'<br>'+
+        '対象日：'+fmtDate(d.date)+'（終日）<br>'+
         '振替休日：'+fmtDate(d.furikae)+'</div>'+
+        (d.reason?('<div class="muted" style="margin-top:6px">理由：'+escapeHtml(d.reason)+'</div>'):'');
+    } else if(a.type==='休日申請'){
+      body='<div style="font-size:14px;line-height:1.8">対象日：'+fmtDate(d.date)+'（終日）</div>'+
         (d.reason?('<div class="muted" style="margin-top:6px">理由：'+escapeHtml(d.reason)+'</div>'):'');
     } else {
       var lines=(d.days||[]).map(function(day,i){
@@ -262,7 +290,7 @@
     card.innerHTML=head+who+body;
 
     if(a.result){
-      if(a.type==='休日出勤' && a.result.overall){
+      if((a.type==='休日出勤'||a.type==='休日申請') && a.result.overall){
         card.appendChild(el('div','muted','回答：'+a.result.overall+(a.approver?('（'+a.approver+'）'):'')+(a.comment?('　'+escapeHtml(a.comment)):'')));
       } else if(a.result.days){
         var rl=a.result.days.map(function(r,i){ return (i+1)+'. '+r.result; }).join('　');
@@ -271,7 +299,7 @@
     }
 
     // 残業の60時間アラート（承認待ち一覧でのみ付与される）
-    if(a.type!=='休日出勤' && typeof a.month_approved_ot==='number'){
+    if(a.type==='残業' && typeof a.month_approved_ot==='number'){
       var refYm=a.month_label||'';
       var thisOt=(d.days||[]).filter(function(day){return String(day.date).slice(0,7)===refYm;}).reduce(function(s,day){return s+(day.ot||0);},0);
       var combined=a.month_approved_ot+thisOt;
@@ -295,7 +323,7 @@
   function buildApproveUI(a){
     var wrap=el('div',null); wrap.style.marginTop='12px'; wrap.style.borderTop='1px solid var(--line)'; wrap.style.paddingTop='12px';
 
-    if(a.type==='休日出勤'){
+    if(a.type==='休日出勤' || a.type==='休日申請'){
       var decision={v:'承認'};
       wrap.appendChild(el('div','muted','<div style="margin-bottom:6px">承認／却下</div>'));
       var seg=el('div','seg yn');
@@ -380,11 +408,12 @@
     if(rows.length===0){ area.appendChild(el('div','empty', ymLabel+'の承認済みデータはありません')); return; }
 
     // 個人別サマリー
-    var per={}; // name -> {ot:分, kyu:日数}
+    var per={}; // name -> {ot:分, kyu:休日出勤日数, yasumi:休日申請日数}
     rows.forEach(function(r){
-      per[r.name]=per[r.name]||{ot:0,kyu:0};
+      per[r.name]=per[r.name]||{ot:0,kyu:0,yasumi:0};
       if(r.type==='残業') per[r.name].ot+=(r.ot||0);
-      else per[r.name].kyu+=1;
+      else if(r.type==='休日出勤') per[r.name].kyu+=1;
+      else per[r.name].yasumi+=1;
     });
     var sumCard=el('div','card');
     var html='<span class="lab">個人別（'+ymLabel+'）</span><div style="margin-top:8px">';
@@ -394,7 +423,7 @@
       var warn= p.ot>=3600?' ⚠60h':(p.ot>=2700?' 45h超':'');
       html+='<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line)">'+
         '<span style="font-weight:700">'+escapeHtml(name)+'</span>'+
-        '<span style="font-size:13.5px">残業 <b style="color:'+col+'">'+durText(p.ot)+'</b>'+(warn?'<span style="color:'+col+';font-weight:700">'+warn+'</span>':'')+' ／ 休日出勤 '+p.kyu+'日</span></div>';
+        '<span style="font-size:13.5px">残業 <b style="color:'+col+'">'+durText(p.ot)+'</b>'+(warn?'<span style="color:'+col+';font-weight:700">'+warn+'</span>':'')+' ／ 休日出勤 '+p.kyu+'日 ／ 休日申請 '+p.yasumi+'日</span></div>';
     });
     html+='</div>';
     sumCard.innerHTML=html;
@@ -404,9 +433,10 @@
     var detCard=el('div','card');
     var dh='<span class="lab">明細（'+rows.length+'件）</span><div style="margin-top:8px;font-size:13px">';
     rows.forEach(function(r){
-      var line= r.type==='残業'
-        ? (fmtMD(r.date)+' '+escapeHtml(r.name)+' 残業'+durText(r.ot))
-        : (fmtMD(r.date)+' '+escapeHtml(r.name)+' 休日出勤 '+r.start+'〜'+r.end+(r.furikae?('／振替'+fmtMD(r.furikae)):''));
+      var line;
+      if(r.type==='残業') line=fmtMD(r.date)+' '+escapeHtml(r.name)+' 残業'+durText(r.ot);
+      else if(r.type==='休日出勤') line=fmtMD(r.date)+' '+escapeHtml(r.name)+' 休日出勤'+(r.furikae?('／振替'+fmtMD(r.furikae)):'');
+      else line=fmtMD(r.date)+' '+escapeHtml(r.name)+' 休日申請';
       dh+='<div style="padding:6px 0;border-bottom:1px solid var(--line)">'+line+(r.status==='一部承認'?' <span class="muted">(一部承認)</span>':'')+'</div>';
     });
     dh+='</div>';
