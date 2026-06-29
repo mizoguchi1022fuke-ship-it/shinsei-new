@@ -96,9 +96,8 @@
 
     var basic=el('div','card');
     basic.innerHTML =
-      '<label class="lab">申請日 <span class="req">*</span></label><input type="date" id="f-date">'+
-      '<div class="row2" style="margin-top:12px"><div><label class="lab">車番</label><input type="text" id="f-sha" placeholder="例）28"></div>'+
-      '<div><label class="lab">氏名</label><input type="text" id="f-name" disabled></div></div>';
+      '<label class="lab">申請日</label><input type="date" id="f-date" disabled>'+
+      '<label class="lab" style="margin-top:12px">氏名</label><input type="text" id="f-name" disabled>';
     c.appendChild(basic);
 
     var holder=el('div',null); holder.id='kubun-body'; c.appendChild(holder);
@@ -241,7 +240,7 @@
     $('bar-btn').disabled=true;
     api('/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       app_no:appno, type:type, applicant_id:user.id, applicant_name:user.name,
-      sha:$('f-sha').value.trim(), apply_date:$('f-date').value, detail:detail
+      sha:'', apply_date:$('f-date').value, detail:detail
     })}).then(function(){ toast('申請を送信しました'); selectTab('mine'); })
       .catch(function(e){ toast(e.message); })
       .then(function(){ $('bar-btn').disabled=false; });
@@ -389,6 +388,17 @@
     c.appendChild(head);
     var area=el('div',null); area.id='sum-area'; c.appendChild(area);
 
+    // 複数月比較
+    var d3=new Date(now.getFullYear(), now.getMonth()-2, 1);
+    var defFrom=d3.getFullYear()+'-'+('0'+(d3.getMonth()+1)).slice(-2);
+    var cmpCard=el('div','card');
+    cmpCard.innerHTML='<label class="lab">複数月比較</label>'+
+      '<div class="row2" style="margin-top:6px"><div><span class="rowlab">開始月</span><input type="month" id="cmp-from" value="'+defFrom+'"></div><div><span class="rowlab">終了月</span><input type="month" id="cmp-to" value="'+defYm+'"></div></div>'+
+      '<button class="btn" id="cmp-go" style="margin-top:10px">比較表示</button>'+
+      '<p class="hint">最大12ヶ月まで比較できます。</p>';
+    c.appendChild(cmpCard);
+    var cmpArea=el('div',null); cmpArea.id='cmp-area'; c.appendChild(cmpArea);
+
     var lastRows=[], lastYm=defYm;
     function load(){
       var ym=$('sum-ym').value||defYm; lastYm=ym;
@@ -397,9 +407,132 @@
         lastRows=j.rows||[]; drawSummary(area, lastRows, ym);
       }).catch(function(e){ area.innerHTML=''; area.appendChild(el('div','empty',e.message)); });
     }
+    function loadCompare(){
+      var from=$('cmp-from').value, to=$('cmp-to').value;
+      if(!from || !to){ toast('開始月・終了月を選んでください'); return; }
+      var months=monthRange(from,to);
+      if(months.length===0 || from>to){ toast('開始月は終了月より前にしてください'); return; }
+      if(months.length>12){ toast('比較は最大12ヶ月までにしてください'); return; }
+      cmpArea.innerHTML='<div class="empty">読み込み中…</div>';
+      Promise.all(months.map(function(ym){
+        return api('/summary?ym='+encodeURIComponent(ym)).then(function(j){ return {ym:ym, rows:j.rows||[]}; });
+      })).then(function(results){ drawCompare(cmpArea, results); })
+        .catch(function(e){ cmpArea.innerHTML=''; cmpArea.appendChild(el('div','empty',e.message)); });
+    }
     $('sum-go').addEventListener('click',load);
     $('sum-xlsx').addEventListener('click',function(){ exportXlsx(lastRows, lastYm); });
+    $('cmp-go').addEventListener('click',loadCompare);
     load();
+  }
+
+  function monthRange(from, to){
+    var list=[];
+    var fp=from.split('-').map(Number), tp=to.split('-').map(Number);
+    var y=fp[0], m=fp[1];
+    var guard=0;
+    while((y<tp[0] || (y===tp[0] && m<=tp[1])) && guard<200){
+      list.push(y+'-'+('0'+m).slice(-2));
+      m++; if(m>12){ m=1; y++; }
+      guard++;
+    }
+    return list;
+  }
+
+  function drawCompare(area, results){
+    area.innerHTML='';
+    var hasData = results.some(function(r){ return r.rows.length>0; });
+    if(!hasData){ area.appendChild(el('div','empty','選択した期間に承認済みデータはありません')); return; }
+
+    var months=results.map(function(r){ return r.ym; });
+    function ymShort(ym){ return (+ym.split('-')[1])+'月'; }
+    function ymLong(ym){ return ym.split('-')[0]+'年'+(+ym.split('-')[1])+'月'; }
+
+    var perPerson={}; // name -> { ym: 分 }
+    var company={};   // ym -> {ot:分, kyu:件, yasumi:件}
+    results.forEach(function(r){
+      company[r.ym]={ot:0,kyu:0,yasumi:0};
+      r.rows.forEach(function(row){
+        if(row.type==='残業'){
+          perPerson[row.name]=perPerson[row.name]||{};
+          perPerson[row.name][r.ym]=(perPerson[row.name][r.ym]||0)+(row.ot||0);
+          company[r.ym].ot+=(row.ot||0);
+        } else if(row.type==='休日出勤'){
+          company[r.ym].kyu+=1;
+        } else {
+          company[r.ym].yasumi+=1;
+        }
+      });
+    });
+
+    // 個人別 残業時間（月別）
+    var card1=el('div','card');
+    var html='<span class="lab">個人別 残業時間（月別）</span>'+
+      '<div style="overflow-x:auto;margin-top:8px"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'+
+      '<tr><th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--line)">氏名</th>'+
+      months.map(function(ym){ return '<th style="padding:6px 8px;border-bottom:2px solid var(--line);white-space:nowrap">'+ymShort(ym)+'</th>'; }).join('')+
+      '</tr>';
+    Object.keys(perPerson).sort().forEach(function(name){
+      html+='<tr><td style="padding:6px 8px;border-bottom:1px solid var(--line);font-weight:700;white-space:nowrap">'+escapeHtml(name)+'</td>';
+      months.forEach(function(ym){
+        var mins=perPerson[name][ym]||0;
+        var col= mins>=3600?'#c0392b':(mins>=2700?'#9a6b00':'#1b2733');
+        html+='<td style="padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;color:'+col+';font-weight:'+(mins>=2700?'800':'400')+'">'+(mins?durText(mins):'—')+'</td>';
+      });
+      html+='</tr>';
+    });
+    html+='</table></div>';
+    card1.innerHTML=html;
+    area.appendChild(card1);
+
+    // 会社全体（月別）
+    var card2=el('div','card');
+    var html2='<span class="lab">会社全体（月別）</span>'+
+      '<div style="overflow-x:auto;margin-top:8px"><table style="width:100%;border-collapse:collapse;font-size:12.5px">'+
+      '<tr><th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--line)">月</th>'+
+      '<th style="padding:6px 8px;border-bottom:2px solid var(--line)">残業合計</th>'+
+      '<th style="padding:6px 8px;border-bottom:2px solid var(--line)">休日出勤(件)</th>'+
+      '<th style="padding:6px 8px;border-bottom:2px solid var(--line)">休日申請(件)</th></tr>';
+    months.forEach(function(ym){
+      var co=company[ym];
+      html2+='<tr><td style="padding:6px 8px;border-bottom:1px solid var(--line);font-weight:700">'+ymLong(ym)+'</td>'+
+        '<td style="padding:6px 8px;border-bottom:1px solid var(--line);text-align:right">'+durText(co.ot)+'</td>'+
+        '<td style="padding:6px 8px;border-bottom:1px solid var(--line);text-align:right">'+co.kyu+'</td>'+
+        '<td style="padding:6px 8px;border-bottom:1px solid var(--line);text-align:right">'+co.yasumi+'</td></tr>';
+    });
+    html2+='</table></div>';
+    card2.innerHTML=html2;
+    area.appendChild(card2);
+
+    var btnCard=el('div','card');
+    var btn=el('button','btn'); btn.textContent='比較表をxlsxで書き出す';
+    btnCard.appendChild(btn);
+    area.appendChild(btnCard);
+    btn.addEventListener('click',function(){ exportCompareXlsx(months, perPerson, company); });
+  }
+
+  function exportCompareXlsx(months, perPerson, company){
+    if(typeof XLSX==='undefined'){ toast('Excel機能を読み込み中です。少し待って再度お試しください'); return; }
+    function ymLong(ym){ return ym.split('-')[0]+'年'+(+ym.split('-')[1])+'月'; }
+
+    var aoa1=[['氏名'].concat(months.map(ymLong))];
+    Object.keys(perPerson).sort().forEach(function(name){
+      var row=[name];
+      months.forEach(function(ym){ row.push(durText(perPerson[name][ym]||0)); });
+      aoa1.push(row);
+    });
+    var ws1=XLSX.utils.aoa_to_sheet(aoa1);
+
+    var aoa2=[['月','残業合計','休日出勤(件)','休日申請(件)']];
+    months.forEach(function(ym){
+      var co=company[ym];
+      aoa2.push([ymLong(ym), durText(co.ot), co.kyu, co.yasumi]);
+    });
+    var ws2=XLSX.utils.aoa_to_sheet(aoa2);
+
+    var wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws1, '個人別月別');
+    XLSX.utils.book_append_sheet(wb, ws2, '会社全体月別');
+    XLSX.writeFile(wb, '複数月比較_'+months[0]+'_'+months[months.length-1]+'.xlsx');
   }
 
   function drawSummary(area, rows, ym){
